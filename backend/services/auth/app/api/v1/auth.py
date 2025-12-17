@@ -1,11 +1,17 @@
 from fastapi import APIRouter, HTTPException, Response, Cookie
 from pydantic import BaseModel, EmailStr
 from jose import jwt, JWTError
-import secrets
 
-from app.core.redis_client import get_redis
 from app.core.jwt import create_access_token, create_refresh_token
 from app.core.config import settings
+from app.core.email_sender import send_otp_email, EmailSendError
+from app.core.otp_service import (
+    issue_otp,
+    verify_otp,
+    OtpRateLimitError,
+    OtpNotFoundError,
+    OtpInvalidError,
+)
 
 router = APIRouter()
 
@@ -22,28 +28,37 @@ class ConfirmIn(BaseModel):
 @router.post("/login/")
 async def login(data: LoginIn):
     """
-    Генерируем OTP код, кладём в Redis с TTL.
-    Отправку email добавим позже.
+    1) rate limit (cooldown)
+    2) генерируем OTP, кладем в Redis (TTL)
+    3) отправляем на email (SMTP) или логируем в dev
     """
-    redis = get_redis()
-    code = f"{secrets.randbelow(1_000_000):06d}"
-    await redis.set(f"otp:{data.email}", code, ex=300)  # 5 минут
-    return {"ok": True}
+    try:
+        code = await issue_otp(data.email)
+    except OtpRateLimitError:
+        raise HTTPException(status_code=429, detail="Too many requests. Try later.")
+
+    try:
+        sent = await send_otp_email(data.email, code)
+    except EmailSendError:
+        # если SMTP упал — не раскрываем детали, но дадим 500
+        raise HTTPException(status_code=500, detail="Failed to send OTP email.")
+
+    return {"ok": True, "sent": sent}
 
 
 @router.post("/confirm/")
 async def confirm(data: ConfirmIn, response: Response):
     """
-    Проверяем OTP в Redis.
-    Если ок — выдаём access JWT и ставим refresh JWT в httpOnly cookie.
+    Проверяем OTP. Если ок — access JWT + refresh JWT cookie
     """
-    redis = get_redis()
-    saved = await redis.get(f"otp:{data.email}")
-
-    if not saved or saved.decode("utf-8") != data.code:
-        raise HTTPException(status_code=400, detail="Invalid code")
-
-    await redis.delete(f"otp:{data.email}")
+    try:
+        await verify_otp(data.email, data.code)
+    except OtpNotFoundError:
+        raise HTTPException(status_code=400, detail="Code expired or not found.")
+    except OtpInvalidError:
+        raise HTTPException(status_code=400, detail="Invalid code.")
+    except OtpRateLimitError:
+        raise HTTPException(status_code=429, detail="Too many attempts. Try later.")
 
     access = create_access_token(subject=data.email)
     refresh = create_refresh_token(subject=data.email)
@@ -52,7 +67,7 @@ async def confirm(data: ConfirmIn, response: Response):
         key="refresh_token",
         value=refresh,
         httponly=True,
-        secure=False,   # dev: False, prod: True
+        secure=False,   # prod: True (https)
         samesite="lax",
         path="/",
     )
@@ -63,7 +78,7 @@ async def confirm(data: ConfirmIn, response: Response):
 @router.post("/refresh/")
 async def refresh(refresh_token: str | None = Cookie(default=None)):
     """
-    Обновление access token по refresh token из httpOnly cookie.
+    Обновляем access по refresh cookie
     """
     if not refresh_token:
         raise HTTPException(status_code=401, detail="Missing refresh token")
@@ -74,7 +89,6 @@ async def refresh(refresh_token: str | None = Cookie(default=None)):
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
         )
-
         if payload.get("type") != "refresh":
             raise HTTPException(status_code=401, detail="Invalid token type")
 

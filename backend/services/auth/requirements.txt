@@ -4,3 +4,4 @@ redis
 pydantic[email]
 python-jose[cryptography]
 python-multipart
+aiosmtplib

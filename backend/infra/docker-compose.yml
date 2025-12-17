@@ -35,14 +35,30 @@ services:
   auth:
     build:
       context: ../services/auth
+      dockerfile: Dockerfile
     container_name: stationery_auth
     restart: unless-stopped
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      JWT_SECRET: "dev-secret-change-me"
+      OTP_TTL_SECONDS: "300"
+      OTP_SEND_COOLDOWN_SECONDS: "30"
+      OTP_CONFIRM_MAX_ATTEMPTS: "5"
+      # SMTP (Gmail)
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM: ${SMTP_FROM}
+      SMTP_TLS: ${SMTP_TLS}
     ports:
       - "8001:8000"
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
-
 
 volumes:
   postgres_data:
