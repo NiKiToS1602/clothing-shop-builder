@@ -65,7 +65,7 @@ export function LoginPage() {
         return;
       }
 
-      setStatus("Код отправлен. Проверь почту (или логи backend в dev).");
+      setStatus("Код отправлен. Проверь почту.");
       startCooldown(COOLDOWN_SECONDS);
     } catch {
       setStatus("Ошибка сети или API");

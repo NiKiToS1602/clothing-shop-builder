@@ -1,25 +1,25 @@
 services:
   postgres:
     image: postgres:16
-    container_name: stationery_postgres
+    container_name: clothing_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: stationery
-      POSTGRES_USER: stationery
-      POSTGRES_PASSWORD: stationery
+      POSTGRES_DB: clothing
+      POSTGRES_USER: clothing
+      POSTGRES_PASSWORD: clothing
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U stationery"]
+      test: ["CMD-SHELL", "pg_isready -U clothing"]
       interval: 5s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7
-    container_name: stationery_redis
+    container_name: clothing_redis
     restart: unless-stopped
     ports:
       - "6379:6379"
@@ -36,16 +36,18 @@ services:
     build:
       context: ../services/auth
       dockerfile: Dockerfile
-    container_name: stationery_auth
+    container_name: clothing_auth
     restart: unless-stopped
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+
       JWT_SECRET: "dev-secret-change-me"
       OTP_TTL_SECONDS: "300"
       OTP_SEND_COOLDOWN_SECONDS: "30"
       OTP_CONFIRM_MAX_ATTEMPTS: "5"
-      # SMTP (Gmail)
+
+      # SMTP (Gmail) — значения берём из backend/infra/.env
       SMTP_HOST: ${SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT}
       SMTP_USER: ${SMTP_USER}
@@ -64,10 +66,10 @@ services:
     build:
       context: ../services/catalog
       dockerfile: Dockerfile
-    container_name: stationery_catalog
+    container_name: clothing_catalog
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgresql+asyncpg://stationery:stationery@postgres:5432/stationery"
+      DATABASE_URL: "postgresql+asyncpg://clothing:clothing@postgres:5432/clothing"
       JWT_SECRET: "dev-secret-change-me"
       JWT_ALGORITHM: "HS256"
     ports:
@@ -75,7 +77,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-
 
 volumes:
   postgres_data:

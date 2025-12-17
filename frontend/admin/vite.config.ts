@@ -9,9 +9,9 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["favicon.svg", "favicon.ico", "apple-touch-icon.png"],
       manifest: {
-        name: "Stationery Admin",
+        name: "Clothing Admin",
         short_name: "Admin",
-        description: "Административная панель конструктора интернет-магазинов канцелярии",
+        description: "Административная панель конструктора интернет-магазинов одежды",
         theme_color: "#ffffff",
         background_color: "#ffffff",
         display: "standalone",
