@@ -10,12 +10,27 @@ from app.schemas.product import ProductCreate, ProductUpdate, ProductOut
 
 router = APIRouter()
 
+SECURITY = [{"BearerAuth": []}]  # имя должно совпадать с securitySchemes в OpenAPI
 
-@router.get("/", response_model=list[ProductOut], dependencies=[Depends(require_auth)])
+
+@router.get(
+    "/",
+    response_model=list[ProductOut],
+    summary="Список товаров",
+    description=(
+        "Возвращает список товаров.\n\n"
+        "Фильтры:\n"
+        "- `category_id` — ограничить товары одной категорией\n"
+        "- `q` — поиск по имени (подстрока, минимум 2 символа)\n\n"
+        "Требуется Bearer access token."
+    ),
+    openapi_extra={"security": SECURITY},
+)
 async def list_products(
     session: AsyncSession = Depends(get_session),
-    category_id: int | None = Query(default=None),
-    q: str | None = Query(default=None, min_length=2),
+    _: dict = Depends(require_auth),
+    category_id: int | None = Query(default=None, description="Фильтр по категории", examples=[1]),
+    q: str | None = Query(default=None, min_length=2, description="Поиск по имени", examples=["футбол"]),
 ):
     stmt = select(Product).order_by(Product.id)
 
@@ -29,14 +44,29 @@ async def list_products(
     return res.scalars().all()
 
 
-@router.post("/", response_model=ProductOut, status_code=201, dependencies=[Depends(require_auth)])
-async def create_product(data: ProductCreate, session: AsyncSession = Depends(get_session)):
-    # категория должна существовать
+@router.post(
+    "/",
+    response_model=ProductOut,
+    status_code=201,
+    summary="Создать товар",
+    description="Создаёт новый товар. SKU должен быть уникален. Категория должна существовать.",
+    openapi_extra={
+        "security": SECURITY,
+        "responses": {
+            400: {"description": "Категория не существует или SKU уже используется"},
+            401: {"description": "Нет или неверный Bearer токен"},
+        },
+    },
+)
+async def create_product(
+    data: ProductCreate,
+    session: AsyncSession = Depends(get_session),
+    _: dict = Depends(require_auth),
+):
     cat = await session.get(Category, data.category_id)
     if not cat:
         raise HTTPException(status_code=400, detail="Category does not exist")
 
-    # sku unique
     exists = await session.execute(select(Product).where(Product.sku == data.sku))
     if exists.scalars().first():
         raise HTTPException(status_code=400, detail="SKU already exists")
@@ -48,16 +78,50 @@ async def create_product(data: ProductCreate, session: AsyncSession = Depends(ge
     return obj
 
 
-@router.get("/{product_id}", response_model=ProductOut, dependencies=[Depends(require_auth)])
-async def get_product(product_id: int, session: AsyncSession = Depends(get_session)):
+@router.get(
+    "/{product_id}",
+    response_model=ProductOut,
+    summary="Получить товар",
+    description="Возвращает товар по идентификатору.",
+    openapi_extra={
+        "security": SECURITY,
+        "responses": {
+            404: {"description": "Товар не найден"},
+            401: {"description": "Нет или неверный Bearer токен"},
+        },
+    },
+)
+async def get_product(
+    product_id: int,
+    session: AsyncSession = Depends(get_session),
+    _: dict = Depends(require_auth),
+):
     obj = await session.get(Product, product_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Product not found")
     return obj
 
 
-@router.patch("/{product_id}", response_model=ProductOut, dependencies=[Depends(require_auth)])
-async def update_product(product_id: int, data: ProductUpdate, session: AsyncSession = Depends(get_session)):
+@router.patch(
+    "/{product_id}",
+    response_model=ProductOut,
+    summary="Обновить товар",
+    description="Частично обновляет товар (PATCH). Передавайте только поля, которые нужно изменить.",
+    openapi_extra={
+        "security": SECURITY,
+        "responses": {
+            400: {"description": "Категория не существует или SKU уже используется"},
+            404: {"description": "Товар не найден"},
+            401: {"description": "Нет или неверный Bearer токен"},
+        },
+    },
+)
+async def update_product(
+    product_id: int,
+    data: ProductUpdate,
+    session: AsyncSession = Depends(get_session),
+    _: dict = Depends(require_auth),
+):
     obj = await session.get(Product, product_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -70,7 +134,9 @@ async def update_product(product_id: int, data: ProductUpdate, session: AsyncSes
             raise HTTPException(status_code=400, detail="Category does not exist")
 
     if "sku" in payload:
-        exists = await session.execute(select(Product).where(Product.sku == payload["sku"], Product.id != obj.id))
+        exists = await session.execute(
+            select(Product).where(Product.sku == payload["sku"], Product.id != obj.id)
+        )
         if exists.scalars().first():
             raise HTTPException(status_code=400, detail="SKU already exists")
 
@@ -82,8 +148,24 @@ async def update_product(product_id: int, data: ProductUpdate, session: AsyncSes
     return obj
 
 
-@router.delete("/{product_id}", status_code=204, dependencies=[Depends(require_auth)])
-async def delete_product(product_id: int, session: AsyncSession = Depends(get_session)):
+@router.delete(
+    "/{product_id}",
+    status_code=204,
+    summary="Удалить товар",
+    description="Удаляет товар.",
+    openapi_extra={
+        "security": SECURITY,
+        "responses": {
+            404: {"description": "Товар не найден"},
+            401: {"description": "Нет или неверный Bearer токен"},
+        },
+    },
+)
+async def delete_product(
+    product_id: int,
+    session: AsyncSession = Depends(get_session),
+    _: dict = Depends(require_auth),
+):
     obj = await session.get(Product, product_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Product not found")
