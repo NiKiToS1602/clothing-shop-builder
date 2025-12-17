@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException, Response, Cookie
-from pydantic import BaseModel, EmailStr
 from jose import jwt, JWTError
 
 from app.core.jwt import create_access_token, create_refresh_token
@@ -12,26 +11,31 @@ from app.core.otp_service import (
     OtpNotFoundError,
     OtpInvalidError,
 )
+from app.schemas.auth import LoginIn, ConfirmIn, TokenOut
 
 router = APIRouter()
 
-
-class LoginIn(BaseModel):
-    email: EmailStr
+SECURITY = [{"BearerAuth": []}]
 
 
-class ConfirmIn(BaseModel):
-    email: EmailStr
-    code: str
-
-
-@router.post("/login/")
+@router.post(
+    "/login/",
+    summary="Запросить OTP-код",
+    description=(
+        "Генерирует одноразовый OTP-код и отправляет его на email.\n\n"
+        "Ограничения:\n"
+        "- нельзя запрашивать слишком часто (cooldown)\n"
+        "- код действует ограниченное время\n\n"
+        "В dev-режиме (если SMTP не настроен) код выводится в логах сервиса."
+    ),
+    openapi_extra={
+        "responses": {
+            429: {"description": "Слишком частые запросы. Подождите и попробуйте снова."},
+            500: {"description": "Ошибка отправки письма (SMTP)"},
+        }
+    },
+)
 async def login(data: LoginIn):
-    """
-    1) rate limit (cooldown)
-    2) генерируем OTP, кладем в Redis (TTL)
-    3) отправляем на email (SMTP) или логируем в dev
-    """
     try:
         code = await issue_otp(data.email)
     except OtpRateLimitError:
@@ -40,17 +44,29 @@ async def login(data: LoginIn):
     try:
         sent = await send_otp_email(data.email, code)
     except EmailSendError:
-        # если SMTP упал — не раскрываем детали, но дадим 500
         raise HTTPException(status_code=500, detail="Failed to send OTP email.")
 
     return {"ok": True, "sent": sent}
 
 
-@router.post("/confirm/")
+@router.post(
+    "/confirm/",
+    response_model=TokenOut,
+    summary="Подтвердить OTP-код",
+    description=(
+        "Проверяет OTP-код. Если код верный:\n"
+        "- возвращает `access_token`\n"
+        "- устанавливает `refresh_token` в httpOnly cookie\n\n"
+        "Access token используется в заголовке `Authorization: Bearer <token>`."
+    ),
+    openapi_extra={
+        "responses": {
+            400: {"description": "Неверный код или код истёк"},
+            429: {"description": "Слишком много попыток ввода кода"},
+        }
+    },
+)
 async def confirm(data: ConfirmIn, response: Response):
-    """
-    Проверяем OTP. Если ок — access JWT + refresh JWT cookie
-    """
     try:
         await verify_otp(data.email, data.code)
     except OtpNotFoundError:
@@ -67,7 +83,7 @@ async def confirm(data: ConfirmIn, response: Response):
         key="refresh_token",
         value=refresh,
         httponly=True,
-        secure=False,   # prod: True (https)
+        secure=False,  # prod: True
         samesite="lax",
         path="/",
     )
@@ -75,11 +91,21 @@ async def confirm(data: ConfirmIn, response: Response):
     return {"access_token": access, "token_type": "bearer"}
 
 
-@router.post("/refresh/")
+@router.post(
+    "/refresh/",
+    response_model=TokenOut,
+    summary="Обновить access token",
+    description=(
+        "Возвращает новый `access_token` по `refresh_token`, который хранится в httpOnly cookie.\n\n"
+        "Если cookie отсутствует или токен невалиден — вернёт 401."
+    ),
+    openapi_extra={
+        "responses": {
+            401: {"description": "Нет refresh token cookie или refresh token невалиден"},
+        }
+    },
+)
 async def refresh(refresh_token: str | None = Cookie(default=None)):
-    """
-    Обновляем access по refresh cookie
-    """
     if not refresh_token:
         raise HTTPException(status_code=401, detail="Missing refresh token")
 

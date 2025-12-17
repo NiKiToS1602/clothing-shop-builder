@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.routes import router as v1_router
+from fastapi.openapi.utils import get_openapi
+
 
 app = FastAPI(title="Auth Service", version="0.1.0")
 
@@ -21,6 +23,30 @@ app.add_middleware(
 )
 
 app.include_router(v1_router, prefix="/api/v1")
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description="Auth API для конструктора интернет-магазинов одежды.",
+        routes=app.routes,
+    )
+
+    schema.setdefault("components", {}).setdefault("securitySchemes", {})
+    schema["components"]["securitySchemes"]["BearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+    }
+
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 
 @app.get("/health")
