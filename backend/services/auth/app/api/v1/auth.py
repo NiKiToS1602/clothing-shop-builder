@@ -1,8 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, EmailStr
-import secrets
 
 from app.core.redis_client import get_redis
+from app.core.jwt import create_access_token, create_refresh_token
 
 router = APIRouter()
 
@@ -19,13 +19,13 @@ class ConfirmIn(BaseModel):
 @router.post("/login/")
 async def login(data: LoginIn):
     redis = get_redis()
-    code = f"{secrets.randbelow(1_000_000):06d}"
+    code = "123456"  # временно фиксированный код
     await redis.set(f"otp:{data.email}", code, ex=300)
     return {"ok": True}
 
 
 @router.post("/confirm/")
-async def confirm(data: ConfirmIn):
+async def confirm(data: ConfirmIn, response: Response):
     redis = get_redis()
     saved = await redis.get(f"otp:{data.email}")
 
@@ -33,4 +33,17 @@ async def confirm(data: ConfirmIn):
         raise HTTPException(status_code=400, detail="Invalid code")
 
     await redis.delete(f"otp:{data.email}")
-    return {"access_token": "stub"}
+
+    access = create_access_token(subject=data.email)
+    refresh = create_refresh_token(subject=data.email)
+
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh,
+        httponly=True,
+        secure=False,   # позже сделаем True
+        samesite="lax",
+        path="/",
+    )
+
+    return {"access_token": access, "token_type": "bearer"}
