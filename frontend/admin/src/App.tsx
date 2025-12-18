@@ -1,7 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { LoginPage } from "./pages/LoginPage";
-import { DashboardPage } from "./pages/DashboardPage";
 import { ProtectedRoute } from "./app/ProtectedRoute";
+import { BuilderPage } from "./pages/BuilderPage";
+import { DashboardPage } from "./pages/DashboardPage";
+
 
 export default function App() {
   return (
@@ -9,14 +11,9 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
 
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <DashboardPage />
-            </ProtectedRoute>
-          }
-        />
+        <Route path="/" element={<BuilderPage />} />
+
+        <Route path="/debug" element={<DashboardPage />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
