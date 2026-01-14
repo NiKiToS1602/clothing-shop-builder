@@ -30,15 +30,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
-import { Switch } from "../components/ui/switch";
 
-import {
-  ChevronDown,
-  ChevronRight,
-  Edit,
-  Plus,
-  Trash2,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, Edit, Plus, Trash2 } from "lucide-react";
 
 export type Category = {
   id: number;
@@ -69,10 +62,11 @@ function buildTree(items: Category[]): Node[] {
     nodes.forEach((n) => sortRec(n.children));
   };
   sortRec(roots);
+
   return roots;
 }
 
-// Небольшой slugify с базовой транслитерацией RU -> EN
+// авто-slug (RU->EN + нормализация)
 function slugify(input: string): string {
   const ru: Record<string, string> = {
     а: "a",
@@ -125,23 +119,42 @@ function slugify(input: string): string {
     .replace(/-{2,}/g, "-");
 }
 
+function Badge({ active }: { active: boolean }) {
+  return (
+    <span
+      className={[
+        "inline-flex items-center rounded-full border px-2 py-0.5 text-xs",
+        active
+          ? "border-emerald-200 text-emerald-700 bg-emerald-50"
+          : "border-slate-200 text-slate-500 bg-slate-50",
+      ].join(" ")}
+    >
+      {active ? "Активна" : "Скрыта"}
+    </span>
+  );
+}
+
 export default function CategoriesPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const tree = useMemo(() => buildTree(categories), [categories]);
+
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  const [serverError, setServerError] = useState("");
 
+  // dialogs
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
-  const [deletingId, setDeletingId] = useState<number | null>(null);
-  const [serverError, setServerError] = useState<string>("");
 
-  const [form, setForm] = useState({
-    name: "",
-    slug: "",
-    parentId: "none" as string,
-    isActive: true,
-  });
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  // form
+  const [name, setName] = useState("");
+  const [parentId, setParentId] = useState<string>("none");
+  const [isActive, setIsActive] = useState(true);
+
+  // UI: блокируем повторные переключения
+  const [toggling, setToggling] = useState<Record<number, boolean>>({});
 
   async function fetchCategories() {
     setServerError("");
@@ -156,50 +169,118 @@ export default function CategoriesPage() {
 
   useEffect(() => {
     fetchCategories();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleExpand = (id: number) => {
     setExpanded((s) => ({ ...s, [id]: !(s[id] ?? true) }));
   };
 
-  const openCreate = (parentId: number | null = null) => {
+  // Виртуальная видимость = активна сама И активны все родители
+  const byId = useMemo(() => {
+    const m = new Map<number, Category>();
+    categories.forEach((c) => m.set(c.id, c));
+    return m;
+  }, [categories]);
+
+  function isVirtuallyVisible(cat: Category): boolean {
+    if (!cat.is_active) return false;
+    let p = cat.parent_id;
+    while (p) {
+      const parent = byId.get(p);
+      if (!parent) break;
+      if (!parent.is_active) return false;
+      p = parent.parent_id;
+    }
+    return true;
+  }
+
+  function collectDescendantIds(node: Node): number[] {
+    const ids: number[] = [];
+    const walk = (n: Node) => {
+      ids.push(n.id);
+      n.children.forEach(walk);
+    };
+    walk(node);
+    return ids;
+  }
+
+  async function patchCategory(id: number, payload: Partial<Category>) {
+    return apiFetch(`/api/v1/categories/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // ✅ Флажок "показывать на сайте" (is_active)
+  // ✅ Если у категории есть дети — переключаем ГРУППОЙ (родитель + все потомки)
+  async function toggleVisibility(node: Node, nextActive: boolean) {
+    const idsToUpdate =
+      node.children.length > 0 ? collectDescendantIds(node) : [node.id];
+
+    // UI lock
+    setToggling((s) => {
+      const copy = { ...s };
+      idsToUpdate.forEach((id) => (copy[id] = true));
+      return copy;
+    });
+
+    setServerError("");
+
+    // Обновляем последовательно (простая логика, меньше сюрпризов)
+    try {
+      for (const id of idsToUpdate) {
+        const res = await patchCategory(id, { is_active: nextActive });
+        if (!res.ok) {
+          let detail = `HTTP ${res.status}`;
+          try {
+            const body = await res.json();
+            detail = body?.detail ? String(body.detail) : detail;
+          } catch {
+            // ignore
+          }
+          throw new Error(detail);
+        }
+      }
+
+      await fetchCategories();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      setServerError(`Не удалось изменить видимость: ${msg}`);
+    } finally {
+      setToggling((s) => {
+        const copy = { ...s };
+        idsToUpdate.forEach((id) => delete copy[id]);
+        return copy;
+      });
+    }
+  }
+
+  const openCreate = (parent: number | null = null) => {
     setEditing(null);
     setServerError("");
-    setForm({
-      name: "",
-      slug: "",
-      parentId: parentId ? String(parentId) : "none",
-      isActive: true,
-    });
+    setName("");
+    setParentId(parent ? String(parent) : "none");
+    setIsActive(true);
     setIsDialogOpen(true);
   };
 
   const openEdit = (cat: Category) => {
     setEditing(cat);
     setServerError("");
-    setForm({
-      name: cat.name,
-      slug: cat.slug,
-      parentId: cat.parent_id ? String(cat.parent_id) : "none",
-      isActive: cat.is_active,
-    });
+    setName(cat.name);
+    setParentId(cat.parent_id ? String(cat.parent_id) : "none");
+    setIsActive(cat.is_active);
     setIsDialogOpen(true);
-  };
-
-  const openDelete = (id: number) => {
-    setDeletingId(id);
-    setIsDeleteDialogOpen(true);
   };
 
   async function handleSave() {
     setServerError("");
 
     const payload = {
-      name: form.name.trim(),
-      slug: form.slug.trim() || slugify(form.name),
-      is_active: form.isActive,
-      parent_id: form.parentId === "none" ? null : Number(form.parentId),
+      name: name.trim(),
+      slug: slugify(name), // ✅ slug всегда авто
+      is_active: isActive, // ✅ флажок управляет отображением на сайте
+      parent_id: parentId === "none" ? null : Number(parentId),
     };
 
     if (payload.name.length < 2) {
@@ -207,7 +288,7 @@ export default function CategoriesPage() {
       return;
     }
     if (payload.slug.length < 2) {
-      setServerError("Slug должен быть минимум 2 символа");
+      setServerError("Не удалось сгенерировать slug (слишком короткое название)");
       return;
     }
 
@@ -222,7 +303,6 @@ export default function CategoriesPage() {
         });
 
     if (!res.ok) {
-      // backend часто отдаёт detail строкой
       let detail = `HTTP ${res.status}`;
       try {
         const body = await res.json();
@@ -230,7 +310,7 @@ export default function CategoriesPage() {
       } catch {
         // ignore
       }
-      setServerError(`Не удалось сохранить категорию: ${detail}`);
+      setServerError(`Не удалось сохранить: ${detail}`);
       return;
     }
 
@@ -238,10 +318,19 @@ export default function CategoriesPage() {
     await fetchCategories();
   }
 
+  const openDelete = (id: number) => {
+    setDeletingId(id);
+    setIsDeleteDialogOpen(true);
+  };
+
   async function confirmDelete() {
     if (!deletingId) return;
     setServerError("");
-    const res = await apiFetch(`/api/v1/categories/${deletingId}`, { method: "DELETE" });
+
+    const res = await apiFetch(`/api/v1/categories/${deletingId}`, {
+      method: "DELETE",
+    });
+
     if (!res.ok) {
       let detail = `HTTP ${res.status}`;
       try {
@@ -252,27 +341,33 @@ export default function CategoriesPage() {
       }
       setServerError(`Не удалось удалить категорию: ${detail}`);
     }
+
     setIsDeleteDialogOpen(false);
     setDeletingId(null);
     await fetchCategories();
   }
 
   const parentOptions = useMemo(() => {
-    // Важно: не даём выбрать самого себя родителем
     return categories
       .filter((c) => (editing ? c.id !== editing.id : true))
-      .filter((c) => c.parent_id === null) // только корневые как в макете
+      .filter((c) => c.parent_id === null)
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [categories, editing]);
 
-  const renderNode = (node: Node, level = 0) => {
+  const renderNode = (node: Node, level = 0, parentVisible = true) => {
     const hasChildren = node.children.length > 0;
     const isExpanded = expanded[node.id] ?? true;
+
+    // виртуальная видимость: учитываем родителя
+    const ownActive = node.is_active;
+    const virtualVisible = parentVisible && ownActive;
+
+    const busy = !!toggling[node.id];
 
     return (
       <div key={node.id}>
         <div
-          className="flex items-center gap-2 py-2 px-3 rounded group hover:bg-muted/50"
+          className="flex items-center gap-3 py-2 px-3 rounded group hover:bg-muted/50"
           style={{ paddingLeft: `${level * 24 + 12}px` }}
         >
           <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -283,45 +378,93 @@ export default function CategoriesPage() {
                 className="p-0.5 rounded hover:bg-muted"
                 aria-label={isExpanded ? "Свернуть" : "Раскрыть"}
               >
-                {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                {isExpanded ? (
+                  <ChevronDown className="w-4 h-4" />
+                ) : (
+                  <ChevronRight className="w-4 h-4" />
+                )}
               </button>
             ) : (
               <div className="w-5" />
             )}
 
+            {/* ✅ Флажок отображения на сайте */}
+            <input
+              type="checkbox"
+              checked={ownActive}
+              disabled={busy}
+              onChange={(e) => toggleVisibility(node, e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300"
+              title={
+                hasChildren
+                  ? "Переключает отображение категории и всех подкатегорий"
+                  : "Переключает отображение категории на сайте"
+              }
+            />
+
             <div className="min-w-0">
               <div className="flex items-center gap-2 min-w-0">
-                <span className="font-medium truncate">{node.name}</span>
-                <span className="text-sm text-muted-foreground truncate">/{node.slug}</span>
                 <span
-                  className={`text-xs px-2 py-0.5 rounded-full border ${
-                    node.is_active
-                      ? "border-emerald-200 text-emerald-700"
-                      : "border-gray-200 text-gray-500"
-                  }`}
+                  className={[
+                    "font-medium truncate",
+                    virtualVisible ? "" : "opacity-50",
+                  ].join(" ")}
                 >
-                  {node.is_active ? "active" : "inactive"}
+                  {node.name}
                 </span>
-                {hasChildren && <span className="text-sm text-muted-foreground">({node.children.length})</span>}
+
+                {/* виртуальный статус */}
+                <Badge active={virtualVisible} />
+
+                {hasChildren && (
+                  <span className="text-sm text-muted-foreground">
+                    ({node.children.length})
+                  </span>
+                )}
               </div>
-              <div className="text-xs text-muted-foreground">id: {node.id}</div>
+
+              {/* можно оставить slug как вспомогательное (не редактируется) */}
+              <div className="text-xs text-muted-foreground truncate">
+                /{node.slug}
+              </div>
             </div>
           </div>
 
           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <Button variant="ghost" size="sm" onClick={() => openCreate(node.id)} title="Добавить подкатегорию">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => openCreate(node.id)}
+              title="Добавить подкатегорию"
+            >
               <Plus className="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => openEdit(node)} title="Редактировать">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => openEdit(node)}
+              title="Редактировать"
+            >
               <Edit className="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => openDelete(node.id)} title="Удалить">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => openDelete(node.id)}
+              title="Удалить"
+            >
               <Trash2 className="w-4 h-4 text-red-500" />
             </Button>
           </div>
         </div>
 
-        {hasChildren && isExpanded && <div>{node.children.map((ch) => renderNode(ch, level + 1))}</div>}
+        {hasChildren && isExpanded && (
+          <div>
+            {node.children.map((ch) =>
+              renderNode(ch, level + 1, virtualVisible),
+            )}
+          </div>
+        )}
       </div>
     );
   };
@@ -331,8 +474,12 @@ export default function CategoriesPage() {
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="mb-1">Каталог категорий</h2>
-          <p className="text-muted-foreground">Управление категориями и подкатегориями товаров</p>
+          <p className="text-muted-foreground">
+            Флажок определяет, отображается ли категория на сайте. Если скрыть
+            родителя — скрывается вся группа.
+          </p>
         </div>
+
         <Button onClick={() => openCreate()} className="flex items-center gap-2">
           <Plus className="w-4 h-4" />
           Добавить категорию
@@ -340,14 +487,18 @@ export default function CategoriesPage() {
       </div>
 
       {serverError && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{serverError}</div>
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {serverError}
+        </div>
       )}
 
       <Card>
         <CardContent className="p-4">
           <div className="space-y-1">
             {tree.length === 0 ? (
-              <div className="text-sm text-muted-foreground">Категории отсутствуют.</div>
+              <div className="text-sm text-muted-foreground">
+                Категорий пока нет. Создайте первую ✨
+              </div>
             ) : (
               tree.map((n) => renderNode(n))
             )}
@@ -355,11 +506,16 @@ export default function CategoriesPage() {
         </CardContent>
       </Card>
 
+      {/* Create/Edit dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editing ? "Редактировать категорию" : "Создать категорию"}</DialogTitle>
-            <DialogDescription>Заполните информацию о категории</DialogDescription>
+            <DialogTitle>
+              {editing ? "Редактировать категорию" : "Создать категорию"}
+            </DialogTitle>
+            <DialogDescription>
+              Slug генерируется автоматически по названию (вручную не задаётся).
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
@@ -367,35 +523,18 @@ export default function CategoriesPage() {
               <Label htmlFor="name">Название</Label>
               <Input
                 id="name"
-                value={form.name}
-                onChange={(e) =>
-                  setForm((s) => ({
-                    ...s,
-                    name: e.target.value,
-                    // если slug ещё не трогали — подстраиваем под имя
-                    slug: s.slug ? s.slug : slugify(e.target.value),
-                  }))
-                }
+                value={name}
+                onChange={(e) => setName(e.target.value)}
                 placeholder="Например: Футболки"
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="slug">Slug</Label>
-              <Input
-                id="slug"
-                value={form.slug}
-                onChange={(e) => setForm((s) => ({ ...s, slug: e.target.value }))}
-                placeholder="t-shirts"
-              />
-              <div className="text-xs text-muted-foreground">
-                Используется в URL. Можно оставить пустым — сгенерируется автоматически.
-              </div>
-            </div>
-
-            <div className="space-y-2">
               <Label>Родительская категория</Label>
-              <Select value={form.parentId} onValueChange={(value) => setForm((s) => ({ ...s, parentId: value }))}>
+              <Select
+                value={parentId}
+                onValueChange={(value) => setParentId(value)}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Без родительской категории" />
                 </SelectTrigger>
@@ -410,36 +549,53 @@ export default function CategoriesPage() {
               </Select>
             </div>
 
-            <div className="flex items-center justify-between rounded-lg border p-3">
+            {/* ✅ флажок отображения */}
+            <label className="flex items-center gap-3 rounded-lg border p-3">
+              <input
+                type="checkbox"
+                checked={isActive}
+                onChange={(e) => setIsActive(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300"
+              />
               <div>
-                <div className="font-medium">Активна</div>
-                <div className="text-xs text-muted-foreground">Неактивные категории можно скрывать в клиентской части</div>
+                <div className="font-medium">
+                  {isActive ? "Активна" : "Скрыта"}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Управляет отображением категории на сайте
+                </div>
               </div>
-              <Switch checked={form.isActive} onCheckedChange={(v) => setForm((s) => ({ ...s, isActive: v }))} />
-            </div>
+            </label>
           </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
               Отмена
             </Button>
-            <Button onClick={handleSave}>{editing ? "Сохранить" : "Создать"}</Button>
+            <Button
+              onClick={handleSave}
+              disabled={name.trim().length < 2}
+            >
+              Сохранить
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
+      {/* Delete dialog */}
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Удалить категорию?</AlertDialogTitle>
             <AlertDialogDescription>
-              Это действие нельзя отменить. Если у категории есть подкатегории, бэкенд может запретить удаление до тех
-              пор, пока вы не переназначите/удалите дочерние категории.
+              Это действие нельзя отменить.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete}>Удалить</AlertDialogAction>
+            <AlertDialogAction onClick={confirmDelete}>
+              Удалить
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
