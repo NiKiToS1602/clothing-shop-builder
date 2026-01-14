@@ -347,7 +347,7 @@ export default function CategoriesPage() {
         <CardContent className="p-4">
           <div className="space-y-1">
             {tree.length === 0 ? (
-              <div className="text-sm text-muted-foreground">Категорий пока нет. Создайте первую ✨</div>
+              <div className="text-sm text-muted-foreground">Категории отсутствуют.</div>
             ) : (
               tree.map((n) => renderNode(n))
             )}
