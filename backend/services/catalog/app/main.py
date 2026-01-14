@@ -1,16 +1,16 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.openapi.utils import get_openapi
-
-from fastapi import Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.errors import make_error
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.errors import make_error
 from app.api.v1.routes import router as v1_router
 
 app = FastAPI(title="Clothing Builder — Catalog Service", version="0.1.0")
+
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
@@ -35,6 +35,26 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
+# ✅ CORS: разрешаем запросы с админки/клиента (как в auth-сервисе)
+origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,  # важно, если используешь refresh cookie
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(v1_router, prefix="/api/v1")
 
 
@@ -54,7 +74,6 @@ def custom_openapi():
         routes=app.routes,
     )
 
-    # 🔒 Добавляем security scheme для Bearer токена
     schema.setdefault("components", {}).setdefault("securitySchemes", {})
     schema["components"]["securitySchemes"]["BearerAuth"] = {
         "type": "http",
@@ -62,8 +81,6 @@ def custom_openapi():
         "bearerFormat": "JWT",
     }
 
-    # Можно включить глобально, но мы уже защищаем роуты dependency
-    # Тогда Swagger покажет замок на эндпоинтах, где security указан
     app.openapi_schema = schema
     return app.openapi_schema
 
