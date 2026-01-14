@@ -6,12 +6,14 @@ class BrandCreate(BaseModel):
     # slug может не отправляться фронтом (мы сгенерируем его на бэке)
     slug: str | None = Field(default=None, min_length=2, max_length=200, examples=["nike"])
     is_active: bool = Field(default=True, examples=[True])
+    description: str | None = Field(default=None, max_length=5000, examples=["Streetwear brand from ..."])
 
 
 class BrandUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=200, examples=["Adidas"])
     slug: str | None = Field(default=None, min_length=2, max_length=200, examples=["adidas"])
     is_active: bool | None = Field(default=None, examples=[True])
+    description: str | None = Field(default=None, max_length=5000, examples=["Updated description"])
 
 
 class BrandOut(BaseModel):
@@ -19,6 +21,8 @@ class BrandOut(BaseModel):
     name: str = Field(examples=["Nike"])
     slug: str = Field(examples=["nike"])
     is_active: bool = Field(examples=[True])
+    description: str | None = Field(default=None, examples=["Streetwear brand from ..."])
+    image_path: str | None = Field(default=None, examples=["/media/brands/brand_1.png"])
 
     class Config:
         from_attributes = True

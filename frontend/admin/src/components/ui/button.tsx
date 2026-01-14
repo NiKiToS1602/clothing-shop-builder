@@ -15,9 +15,9 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        // ✅ Tailwind v4 без tailwind.config НЕ умеет bg-primary → используем CSS vars напрямую
+        // ✅ fixed: fallback + border/shadow чтобы не было “прозрачной” кнопки
         default:
-          "bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90",
+          "bg-[var(--primary,#030213)] text-[var(--primary-foreground,#ffffff)] hover:opacity-90 border border-black/10 shadow-sm",
         destructive:
           "bg-[#d4183d] text-white hover:opacity-90 focus-visible:ring-[#d4183d]/20",
         outline:
@@ -29,9 +29,9 @@ const buttonVariants = cva(
       },
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",
-        sm: "h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5",
-        lg: "h-10 rounded-md px-6 has-[>svg]:px-4",
-        icon: "size-9 rounded-md",
+        sm: "h-8 rounded-md px-3 text-xs",
+        lg: "h-10 rounded-md px-6",
+        icon: "h-9 w-9",
       },
     },
     defaultVariants: {
@@ -41,16 +41,19 @@ const buttonVariants = cva(
   }
 );
 
+export interface ButtonProps
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
+    VariantProps<typeof buttonVariants> {
+  asChild?: boolean;
+}
+
 function Button({
   className,
   variant,
   size,
   asChild = false,
   ...props
-}: React.ComponentProps<"button"> &
-  VariantProps<typeof buttonVariants> & {
-    asChild?: boolean;
-  }) {
+}: ButtonProps) {
   const Comp = asChild ? Slot : "button";
 
   return (

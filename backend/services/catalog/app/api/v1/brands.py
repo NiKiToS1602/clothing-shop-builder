@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
+import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,8 +31,8 @@ def _slugify(value: str) -> str:
     v = value.strip().lower()
     v = v.replace("_", "-")
     v = _slug_re.sub("-", v)
-    v = re.sub(r"-+", "-", v).strip("-")
-    return v or "brand"
+    v = v.strip("-")
+    return v
 
 
 @router.get(
@@ -66,7 +68,7 @@ async def create_brand(
     if exists.scalars().first():
         raise HTTPException(status_code=400, detail="Brand with same name or slug already exists")
 
-    obj = Brand(name=data.name, slug=slug, is_active=data.is_active)
+    obj = Brand(name=data.name, slug=slug, is_active=data.is_active, description=data.description)
     session.add(obj)
     await session.commit()
     await session.refresh(obj)
@@ -108,12 +110,13 @@ async def update_brand(
         payload["slug"] = _slugify(payload["name"])
 
     if "slug" in payload and payload["slug"]:
-        payload["slug"] = _slugify(payload["slug"])
+        slug = payload["slug"].strip().lower()
+        payload["slug"] = slug
 
-    # проверка уникальности
-    if ("name" in payload) or ("slug" in payload):
-        name = payload.get("name", obj.name)
-        slug = payload.get("slug", obj.slug)
+    # проверяем уникальность (если изменяется name/slug)
+    name = payload.get("name")
+    slug = payload.get("slug")
+    if name or slug:
         exists = await session.execute(
             select(Brand).where(
                 ((Brand.name == name) | (Brand.slug == slug)) & (Brand.id != brand_id)
@@ -125,6 +128,46 @@ async def update_brand(
     for k, v in payload.items():
         setattr(obj, k, v)
 
+    await session.commit()
+    await session.refresh(obj)
+    return obj
+
+
+@router.post(
+    "/{brand_id}/image",
+    response_model=BrandOut,
+    summary="Загрузить изображение бренда",
+    openapi_extra={"security": SECURITY},
+)
+async def upload_brand_image(
+    brand_id: int,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+    _: dict = Depends(require_auth),
+):
+    obj = await session.get(Brand, brand_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Brand not found")
+
+    # Простая валидация типа
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image files are allowed")
+
+    media_root = Path("/app/media/brands")
+    media_root.mkdir(parents=True, exist_ok=True)
+
+    # сохраняем с расширением из имени файла (если есть)
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}:
+        suffix = ".png"
+
+    filename = f"brand_{brand_id}_{int(time.time())}{suffix}"
+    out_path = media_root / filename
+
+    content = await file.read()
+    out_path.write_bytes(content)
+
+    obj.image_path = f"/media/brands/{filename}"
     await session.commit()
     await session.refresh(obj)
     return obj
