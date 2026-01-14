@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import CategoriesPage from "./CategoriesPage";
+import BrandsPage from "./BrandsPage";
+import UsersPage from "./UsersPage";
 
-type TabKey = "categories" | "products" | "brands" | "settings";
+type TabKey = "categories" | "products" | "brands" | "users" | "settings";
 
 export default function AdminPanelPage() {
   const tabs = useMemo(
@@ -10,6 +12,7 @@ export default function AdminPanelPage() {
         { key: "categories", label: "Категории" },
         { key: "products", label: "Товары" },
         { key: "brands", label: "Бренды" },
+        { key: "users", label: "Пользователи" },
         { key: "settings", label: "Настройки" },
       ] as const,
     []
@@ -58,9 +61,8 @@ export default function AdminPanelPage() {
         {active === "products" && (
           <div className="text-sm text-black/70">Раздел «Товары» — следующий шаг.</div>
         )}
-        {active === "brands" && (
-          <div className="text-sm text-black/70">Раздел «Бренды» — следующий шаг.</div>
-        )}
+        {active === "brands" && <BrandsPage />}
+        {active === "users" && <UsersPage />}
         {active === "settings" && (
           <div className="text-sm text-black/70">Раздел «Настройки» — следующий шаг.</div>
         )}

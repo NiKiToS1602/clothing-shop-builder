@@ -9,7 +9,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.errors import make_error
 from app.api.v1.routes import router as v1_router
 
+# DB init (для учебного проекта: создаём таблицы при старте)
+from app.db.base import Base
+from app.db.session import engine
+import app.models  # noqa: F401  # важно: чтобы Base.metadata увидела модели
+
 app = FastAPI(title="Clothing Builder — Catalog Service", version="0.1.0")
+
+
+@app.on_event("startup")
+async def _startup_create_tables():
+    # ✅ Создаём таблицы, если их ещё нет (в т.ч. новые: brands/users)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 
 @app.exception_handler(StarletteHTTPException)
